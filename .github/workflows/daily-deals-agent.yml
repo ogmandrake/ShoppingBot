@@ -40,5 +40,6 @@ jobs:
             git config user.email "github-actions[bot]@users.noreply.github.com"
             git add data/price_history.csv data/sale_report.txt
             git commit -m "chore: update daily deal history"
-            git push
+            git pull --rebase origin "${GITHUB_REF_NAME}"
+            git push origin "HEAD:${GITHUB_REF_NAME}"
           fi

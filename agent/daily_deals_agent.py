@@ -15,6 +15,7 @@ from typing import Iterable, List
 import requests
 from bs4 import BeautifulSoup
 from duckduckgo_search import DDGS
+from duckduckgo_search.exceptions import DuckDuckGoSearchException
 
 PROMPTS_FILE = Path(os.getenv("PROMPTS_FILE", "shopping_prompts.txt"))
 HISTORY_FILE = Path(os.getenv("PRICE_HISTORY_FILE", "data/price_history.csv"))
@@ -155,11 +156,15 @@ def discover_offers(item: str) -> List[Offer]:
     query = f"{item} price shipping Canada"
     urls: list[str] = []
 
-    with DDGS() as ddgs:
-        for result in ddgs.text(query, max_results=MAX_RESULTS_PER_ITEM):
-            href = result.get("href")
-            if href and href.startswith("http"):
-                urls.append(href)
+    try:
+        with DDGS() as ddgs:
+            for result in ddgs.text(query, max_results=MAX_RESULTS_PER_ITEM):
+                href = result.get("href")
+                if href and href.startswith("http"):
+                    urls.append(href)
+    except DuckDuckGoSearchException as exc:
+        print(f"DuckDuckGo search failed for '{item}': {exc}")
+        return []
 
     offers: list[Offer] = []
     for url in urls:

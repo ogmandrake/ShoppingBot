@@ -1,0 +1,4 @@
+# One item/search prompt per line
+# Example:
+# 65-inch OLED TV
+# PlayStation 5

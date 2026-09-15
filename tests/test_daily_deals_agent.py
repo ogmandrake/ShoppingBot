@@ -1,9 +1,15 @@
 import unittest
 
+from duckduckgo_search import DDGS
+
 from agent.daily_deals_agent import Offer, detect_sales, parse_json_ld_offers, parse_shipping_cost
 
 
 class DailyDealsAgentTests(unittest.TestCase):
+    def test_ddgs_client_initializes(self):
+        with DDGS() as ddgs:
+            self.assertIsNotNone(ddgs)
+
     def test_parse_shipping_cost_detects_free_shipping(self):
         self.assertEqual(parse_shipping_cost("Fast delivery with FREE shipping to Canada"), 0.0)
 

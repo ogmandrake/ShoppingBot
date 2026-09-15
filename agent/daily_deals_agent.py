@@ -296,7 +296,15 @@ def write_sale_report(path: Path, body: str) -> None:
     path.write_text(body, encoding="utf-8")
 
 
+def ensure_runtime_files() -> None:
+    ensure_history_file(HISTORY_FILE)
+    SALE_REPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
+    if not SALE_REPORT_FILE.exists():
+        SALE_REPORT_FILE.touch()
+
+
 def main() -> int:
+    ensure_runtime_files()
     items = load_item_prompts(PROMPTS_FILE)
     if not items:
         print(f"No items found in {PROMPTS_FILE}")

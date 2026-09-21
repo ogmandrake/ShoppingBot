@@ -14,16 +14,16 @@ from typing import Iterable, List
 import psycopg
 import requests
 from bs4 import BeautifulSoup
-from duckduckgo_search import DDGS
-from duckduckgo_search.exceptions import DuckDuckGoSearchException
 
 PROMPTS_FILE = Path(os.getenv("PROMPTS_FILE", "shopping_prompts.txt"))
 DATABASE_URL = os.getenv("DATABASE_URL")
+SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
 SALE_REPORT_FILE = Path(os.getenv("SALE_REPORT_FILE", "data/sale_report.txt"))
 MAX_RESULTS_PER_ITEM = int(os.getenv("MAX_RESULTS_PER_ITEM", "8"))
 TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "15"))
 
 PRICE_HISTORY_TABLE = "price_history"
+SERPAPI_URL = "https://serpapi.com/search.json"
 
 
 @dataclass
@@ -144,17 +144,33 @@ def parse_json_ld_offers(item: str, url: str, html: str) -> List[Offer]:
 
 
 def discover_offers(item: str) -> List[Offer]:
+    if not SERPAPI_API_KEY:
+        raise RuntimeError("SERPAPI_API_KEY must be configured")
+
     query = f"{item} price shipping Canada"
     urls: list[str] = []
 
     try:
-        with DDGS() as ddgs:
-            for result in ddgs.text(query, max_results=MAX_RESULTS_PER_ITEM):
-                href = result.get("href")
-                if href and href.startswith("http"):
-                    urls.append(href)
-    except DuckDuckGoSearchException as exc:
-        print(f"DuckDuckGo search failed for '{item}': {exc}")
+        response = requests.get(
+            SERPAPI_URL,
+            params={
+                "api_key": SERPAPI_API_KEY,
+                "engine": "google",
+                "q": query,
+                "num": MAX_RESULTS_PER_ITEM,
+            },
+            timeout=TIMEOUT_SECONDS,
+        )
+        response.raise_for_status()
+        search_data = response.json()
+        if search_data.get("error"):
+            raise RuntimeError(search_data["error"])
+        for result in search_data.get("organic_results", []):
+            href = result.get("link")
+            if href and href.startswith("http"):
+                urls.append(href)
+    except (requests.RequestException, ValueError, RuntimeError) as exc:
+        print(f"SerpAPI search failed for '{item}': {exc}")
         return []
 
     offers: list[Offer] = []

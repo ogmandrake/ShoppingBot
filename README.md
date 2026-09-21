@@ -17,6 +17,7 @@ ShoppingBot includes a daily AI-powered deals agent that:
 1. Add your desired items to `shopping_prompts.txt`, one per line.
 2. Configure repository secrets for email notifications:
    - `DATABASE_URL`
+   - `SERPAPI_API_KEY`
    - `SMTP_HOST`
    - `SMTP_PORT`
    - `SMTP_USERNAME`
@@ -43,6 +44,7 @@ Run the agent with a PostgreSQL connection string:
 ```bash
 docker run --rm \
    -e DATABASE_URL="postgresql://user:password@host:5432/shoppingbot" \
+   -e SERPAPI_API_KEY="your-serpapi-key" \
    shoppingbot
 ```
 
@@ -51,6 +53,19 @@ Start PostgreSQL in the background:
 ```bash
 docker compose up -d postgres
 ```
+
+Build and run the shopping bot against the Compose PostgreSQL service:
+```bash
+docker compose up --build shoppingbot
+```
+
+Set `SERPAPI_API_KEY` in the host environment before running Compose:
+```powershell
+$env:SERPAPI_API_KEY = "your-serpapi-key"
+docker compose up --build shoppingbot
+```
+
+The bot is a one-shot container: it runs the configured shopping scan and exits. The Compose connection string uses the internal service name `postgres`; from the host, use `localhost` instead.
 
 For local development, use:
 ```text
@@ -72,6 +87,7 @@ Pass email settings and other runtime options with `-e`, for example:
 ```bash
 docker run --rm \
    -e DATABASE_URL="postgresql://user:password@host:5432/shoppingbot" \
+   -e SERPAPI_API_KEY="your-serpapi-key" \
    -v "${PWD}/data:/app/data" \
    -e SMTP_HOST=smtp.example.com \
    -e SMTP_PORT=587 \

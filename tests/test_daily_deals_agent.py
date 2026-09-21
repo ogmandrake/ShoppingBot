@@ -1,9 +1,6 @@
 import unittest
 from unittest.mock import patch
 
-from duckduckgo_search import DDGS
-from duckduckgo_search.exceptions import RatelimitException
-
 from agent.daily_deals_agent import (
     Offer,
     detect_sales,
@@ -15,10 +12,6 @@ from agent.daily_deals_agent import (
 
 
 class DailyDealsAgentTests(unittest.TestCase):
-    def test_ddgs_client_initializes(self):
-        with DDGS() as ddgs:
-            self.assertIsNotNone(ddgs)
-
     def test_parse_shipping_cost_detects_free_shipping(self):
         self.assertEqual(parse_shipping_cost("Fast delivery with FREE shipping to Canada"), 0.0)
 
@@ -52,12 +45,12 @@ class DailyDealsAgentTests(unittest.TestCase):
         self.assertEqual(len(alerts), 1)
         self.assertEqual(alerts[0].item, "Keyboard")
 
-    @patch("agent.daily_deals_agent.DDGS")
-    def test_discover_offers_handles_ddgs_rate_limits(self, ddgs_cls):
-        ddgs = ddgs_cls.return_value.__enter__.return_value
-        ddgs.text.side_effect = RatelimitException("rate limited")
+    @patch("agent.daily_deals_agent.requests.get")
+    def test_discover_offers_handles_serpapi_errors(self, get):
+        get.side_effect = RuntimeError("rate limited")
 
-        offers = discover_offers("Winter Bike Tires")
+        with patch("agent.daily_deals_agent.SERPAPI_API_KEY", "test-key"):
+            offers = discover_offers("Winter Bike Tires")
 
         self.assertEqual(offers, [])
 

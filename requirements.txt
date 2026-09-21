@@ -1,4 +1,5 @@
 beautifulsoup4==4.12.3
 duckduckgo-search==6.3.5
+psycopg[binary]==3.2.3
 primp<2
 requests==2.32.3

@@ -1,0 +1,19 @@
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: shoppingbot
+      POSTGRES_USER: shoppingbot
+      POSTGRES_PASSWORD: shoppingbot
+    ports:
+      - "5432:5432"
+    volumes:
+      - shoppingbot-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U shoppingbot -d shoppingbot"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+volumes:
+  shoppingbot-postgres-data:

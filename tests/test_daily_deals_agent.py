@@ -1,6 +1,4 @@
 import unittest
-from pathlib import Path
-from tempfile import TemporaryDirectory
 from unittest.mock import patch
 
 from duckduckgo_search import DDGS
@@ -10,7 +8,7 @@ from agent.daily_deals_agent import (
     Offer,
     detect_sales,
     discover_offers,
-    ensure_runtime_files,
+    ensure_history_table,
     parse_json_ld_offers,
     parse_shipping_cost,
 )
@@ -63,18 +61,16 @@ class DailyDealsAgentTests(unittest.TestCase):
 
         self.assertEqual(offers, [])
 
-    def test_ensure_runtime_files_creates_history_and_sale_report(self):
-        with TemporaryDirectory() as tmp_dir:
-            history_file = Path(tmp_dir) / "data" / "price_history.csv"
-            sale_report_file = Path(tmp_dir) / "data" / "sale_report.txt"
-            with (
-                patch("agent.daily_deals_agent.HISTORY_FILE", history_file),
-                patch("agent.daily_deals_agent.SALE_REPORT_FILE", sale_report_file),
-            ):
-                ensure_runtime_files()
+    def test_ensure_history_table_creates_schema(self):
+        connection = unittest.mock.MagicMock()
 
-            self.assertTrue(history_file.exists())
-            self.assertTrue(sale_report_file.exists())
+        ensure_history_table(connection)
+
+        connection.cursor.assert_called_once_with()
+        connection.commit.assert_called_once_with()
+        cursor = connection.cursor.return_value.__enter__.return_value
+        self.assertEqual(cursor.execute.call_count, 2)
+        self.assertIn("CREATE TABLE IF NOT EXISTS price_history", cursor.execute.call_args_list[0].args[0])
 
 
 if __name__ == "__main__":

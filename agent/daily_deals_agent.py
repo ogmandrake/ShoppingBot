@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import csv
 import json
 import os
 import re
@@ -12,27 +11,19 @@ from email.message import EmailMessage
 from pathlib import Path
 from typing import Iterable, List
 
+import psycopg
 import requests
 from bs4 import BeautifulSoup
 from duckduckgo_search import DDGS
 from duckduckgo_search.exceptions import DuckDuckGoSearchException
 
 PROMPTS_FILE = Path(os.getenv("PROMPTS_FILE", "shopping_prompts.txt"))
-HISTORY_FILE = Path(os.getenv("PRICE_HISTORY_FILE", "data/price_history.csv"))
+DATABASE_URL = os.getenv("DATABASE_URL")
 SALE_REPORT_FILE = Path(os.getenv("SALE_REPORT_FILE", "data/sale_report.txt"))
 MAX_RESULTS_PER_ITEM = int(os.getenv("MAX_RESULTS_PER_ITEM", "8"))
 TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "15"))
 
-PRICE_HISTORY_COLUMNS = [
-    "timestamp_utc",
-    "item",
-    "retailer",
-    "url",
-    "price",
-    "currency",
-    "shipping_cost",
-    "ships_to_canada",
-]
+PRICE_HISTORY_TABLE = "price_history"
 
 
 @dataclass
@@ -188,45 +179,77 @@ def discover_offers(item: str) -> List[Offer]:
     return [offer for offer in unique.values() if offer.ships_to_canada]
 
 
-def ensure_history_file(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        return
-    with path.open("w", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=PRICE_HISTORY_COLUMNS)
-        writer.writeheader()
+def get_database_connection() -> psycopg.Connection:
+    if not DATABASE_URL:
+        raise RuntimeError("DATABASE_URL must be configured")
+    return psycopg.connect(DATABASE_URL)
 
 
-def append_history(path: Path, offers: list[Offer], timestamp_utc: str) -> None:
-    ensure_history_file(path)
-    with path.open("a", encoding="utf-8", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=PRICE_HISTORY_COLUMNS)
-        for offer in offers:
-            writer.writerow(
-                {
-                    "timestamp_utc": timestamp_utc,
-                    "item": offer.item,
-                    "retailer": offer.retailer,
-                    "url": offer.url,
-                    "price": f"{offer.price:.2f}",
-                    "currency": offer.currency,
-                    "shipping_cost": f"{offer.shipping_cost:.2f}",
-                    "ships_to_canada": str(offer.ships_to_canada).lower(),
-                }
+def ensure_history_table(connection: psycopg.Connection) -> None:
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"""
+            CREATE TABLE IF NOT EXISTS {PRICE_HISTORY_TABLE} (
+                id BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+                timestamp_utc TIMESTAMPTZ NOT NULL,
+                item TEXT NOT NULL,
+                retailer TEXT NOT NULL,
+                url TEXT NOT NULL,
+                price NUMERIC(12, 2) NOT NULL,
+                currency TEXT NOT NULL,
+                shipping_cost NUMERIC(12, 2) NOT NULL,
+                ships_to_canada BOOLEAN NOT NULL
             )
+            """
+        )
+        cursor.execute(
+            f"""
+            CREATE INDEX IF NOT EXISTS price_history_lookup_idx
+            ON {PRICE_HISTORY_TABLE} (item, retailer, url, timestamp_utc DESC)
+            """
+        )
+    connection.commit()
 
 
-def load_previous_prices(path: Path) -> dict[tuple[str, str, str], float]:
-    if not path.exists():
-        return {}
+def append_history(connection: psycopg.Connection, offers: list[Offer], timestamp_utc: str) -> None:
+    if not offers:
+        return
+    with connection.cursor() as cursor:
+        cursor.executemany(
+            f"""
+            INSERT INTO {PRICE_HISTORY_TABLE}
+                (timestamp_utc, item, retailer, url, price, currency, shipping_cost, ships_to_canada)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+            """,
+            [
+                (
+                    timestamp_utc,
+                    offer.item,
+                    offer.retailer,
+                    offer.url,
+                    offer.price,
+                    offer.currency,
+                    offer.shipping_cost,
+                    offer.ships_to_canada,
+                )
+                for offer in offers
+            ],
+        )
+    connection.commit()
+
+
+def load_previous_prices(connection: psycopg.Connection) -> dict[tuple[str, str, str], float]:
     previous: dict[tuple[str, str, str], float] = {}
-    with path.open("r", encoding="utf-8", newline="") as f:
-        for row in csv.DictReader(f):
-            key = (row["item"], row["retailer"], row["url"])
-            try:
-                previous[key] = float(row["price"])
-            except (TypeError, ValueError):
-                continue
+    with connection.cursor() as cursor:
+        cursor.execute(
+            f"""
+            SELECT DISTINCT ON (item, retailer, url) item, retailer, url, price
+            FROM {PRICE_HISTORY_TABLE}
+            ORDER BY item, retailer, url, timestamp_utc DESC, id DESC
+            """
+        )
+        for item, retailer, url, price in cursor.fetchall():
+            previous[(item, retailer, url)] = float(price)
     return previous
 
 
@@ -296,39 +319,40 @@ def write_sale_report(path: Path, body: str) -> None:
     path.write_text(body, encoding="utf-8")
 
 
-def ensure_runtime_files() -> None:
-    ensure_history_file(HISTORY_FILE)
+def ensure_runtime_files(connection: psycopg.Connection) -> None:
+    ensure_history_table(connection)
     SALE_REPORT_FILE.parent.mkdir(parents=True, exist_ok=True)
     if not SALE_REPORT_FILE.exists():
         SALE_REPORT_FILE.touch()
 
 
 def main() -> int:
-    ensure_runtime_files()
-    items = load_item_prompts(PROMPTS_FILE)
-    if not items:
-        print(f"No items found in {PROMPTS_FILE}")
+    with get_database_connection() as connection:
+        ensure_runtime_files(connection)
+        items = load_item_prompts(PROMPTS_FILE)
+        if not items:
+            print(f"No items found in {PROMPTS_FILE}")
+            return 0
+
+        previous_prices = load_previous_prices(connection)
+        all_offers: list[Offer] = []
+
+        for item in items:
+            all_offers.extend(discover_offers(item))
+
+        now = datetime.now(timezone.utc).isoformat()
+        append_history(connection, all_offers, now)
+
+        alerts = detect_sales(current=all_offers, previous_prices=previous_prices)
+        if not alerts:
+            print("No sales detected")
+            return 0
+
+        body = build_email_body(alerts)
+        write_sale_report(SALE_REPORT_FILE, body)
+        send_email_if_configured(body)
+        print(f"Detected {len(alerts)} sale alerts")
         return 0
-
-    previous_prices = load_previous_prices(HISTORY_FILE)
-    all_offers: list[Offer] = []
-
-    for item in items:
-        all_offers.extend(discover_offers(item))
-
-    now = datetime.now(timezone.utc).isoformat()
-    append_history(HISTORY_FILE, all_offers, now)
-
-    alerts = detect_sales(current=all_offers, previous_prices=previous_prices)
-    if not alerts:
-        print("No sales detected")
-        return 0
-
-    body = build_email_body(alerts)
-    write_sale_report(SALE_REPORT_FILE, body)
-    send_email_if_configured(body)
-    print(f"Detected {len(alerts)} sale alerts")
-    return 0
 
 
 if __name__ == "__main__":

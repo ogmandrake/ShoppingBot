@@ -57,14 +57,15 @@ For local development, use:
 DATABASE_URL=postgresql://shoppingbot:shoppingbot@localhost:5432/shoppingbot
 ```
 
-The database data is stored in the named `shoppingbot-postgres-data` volume. Stop the database with:
+The database data is stored on the host at `C:\tmp\pgadmin-data-shoppingbot`. Stop the database with:
 ```bash
 docker compose down
 ```
 
-To remove the database and its local data:
+To remove the database and its local data, stop the stack and delete `C:\tmp\pgadmin-data-shoppingbot`:
 ```bash
-docker compose down -v
+docker compose down
+Remove-Item -Recurse -Force C:\tmp\pgadmin-data-shoppingbot
 ```
 
 Pass email settings and other runtime options with `-e`, for example:

@@ -24,7 +24,7 @@ SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
 VERBOSE_LOGGING = os.getenv("VERBOSE_LOGGING", "false").lower() in {"1", "true", "yes", "on"}
 SALE_REPORT_FILE = Path(os.getenv("SALE_REPORT_FILE", "data/sale_report.txt"))
 LAST_RESPONSE_FILE = Path(os.getenv("LAST_RESPONSE_FILE", "data/last_response.json"))
-MAX_RESULTS_PER_ITEM = int(os.getenv("MAX_RESULTS_PER_ITEM", "8"))
+MAX_RESULTS_PER_ITEM = int(os.getenv("MAX_RESULTS_PER_ITEM", "20"))
 TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "30"))
 
 PRICE_HISTORY_TABLE = "price_history"
@@ -203,7 +203,7 @@ def discover_offers(item: str) -> List[Offer]:
     if not SERPAPI_API_KEY:
         raise RuntimeError("SERPAPI_API_KEY must be configured")
 
-    query = f"{item} price shipping Canada"
+    query = f"{item} Canada"
     urls: list[str] = []
 
     try:

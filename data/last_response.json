@@ -1,0 +1,26 @@
+{
+  "search_metadata": {
+    "id": "6ab1fa85f8cc781f2587a826",
+    "status": "Success",
+    "json_endpoint": "https://serpapi.com/searches/JeD9OMMYbLvxppU92qN09NfWoa0vYYE7EiTi2XOjStU/6ab1fa85f8cc781f2587a826.json",
+    "markdown_endpoint": "https://serpapi.com/searches/JeD9OMMYbLvxppU92qN09NfWoa0vYYE7EiTi2XOjStU/6ab1fa85f8cc781f2587a826.md",
+    "created_at": "2026-09-22 03:48:21 UTC",
+    "processed_at": "2026-09-22 03:48:21 UTC",
+    "google_shopping_url": "https://www.google.com/search?udm=28&q=Studded+Winter+Bike+Tires+price+shipping+Canada&hl=en&gl=us",
+    "raw_html_file": "https://serpapi.com/searches/JeD9OMMYbLvxppU92qN09NfWoa0vYYE7EiTi2XOjStU/6ab1fa85f8cc781f2587a826.html",
+    "total_time_taken": 5.32
+  },
+  "search_parameters": {
+    "engine": "google_shopping",
+    "q": "Studded Winter Bike Tires price shipping Canada",
+    "google_domain": "google.com",
+    "hl": "en",
+    "gl": "us",
+    "device": "desktop"
+  },
+  "search_information": {
+    "query_displayed": "Studded Winter Bike Tires price shipping Canada",
+    "shopping_results_state": "Fully empty"
+  },
+  "error": "Google hasn't returned any results for this query."
+}

@@ -1,5 +1,11 @@
 import unittest
+import json
+import os
+from pathlib import Path
+from tempfile import TemporaryDirectory
 from unittest.mock import patch
+
+import requests
 
 from agent.daily_deals_agent import (
     Offer,
@@ -7,11 +13,121 @@ from agent.daily_deals_agent import (
     discover_offers,
     ensure_history_table,
     parse_json_ld_offers,
+    parse_serpapi_shopping_results,
     parse_shipping_cost,
+    log_http_exchange,
+    write_last_response,
 )
 
 
 class DailyDealsAgentTests(unittest.TestCase):
+    def test_write_last_response_overwrites_json_file(self):
+        with TemporaryDirectory() as temp_dir:
+            response_path = Path(temp_dir) / "data" / "last_response.json"
+            write_last_response(response_path, {"query": "iphone", "price": 999})
+            write_last_response(response_path, {"query": "pixel", "price": 799})
+
+            self.assertEqual(
+                json.loads(response_path.read_text(encoding="utf-8")),
+                {"query": "pixel", "price": 799},
+            )
+
+    def test_verbose_logging_redacts_api_key(self):
+        response = unittest.mock.MagicMock()
+        response.request.url = "https://serpapi.com/search.json?api_key=secret-key&q=iphone"
+        response.url = response.request.url
+        response.status_code = 200
+        response.headers = {"content-type": "application/json"}
+        response.text = '{"shopping_results": []}'
+
+        with patch("agent.daily_deals_agent.VERBOSE_LOGGING", True), self.assertLogs(
+            "agent.daily_deals_agent", level="DEBUG"
+        ) as logs:
+            log_http_exchange("SerpAPI", response)
+
+        output = "\n".join(logs.output)
+        self.assertIn("api_key=<redacted>", output)
+        self.assertNotIn("secret-key", output)
+
+    def test_parse_serpapi_shopping_results_extracts_mock_prices(self):
+        mock_path = Path(__file__).parents[1] / "mock_results.json"
+        with mock_path.open("r", encoding="utf-8") as file:
+            search_data = json.load(file)
+
+        offers = parse_serpapi_shopping_results(
+            item="40mm to 50mm Studded Winter Bike Tires",
+            search_data=search_data,
+        )
+
+        self.assertEqual(len(offers), len(search_data["shopping_results"]))
+        self.assertEqual(offers[0].price, 61.30)
+        self.assertEqual(offers[1].price, 225.00)
+        self.assertEqual(offers[0].retailer, "Ebikecan")
+
+    @patch("agent.daily_deals_agent.requests.get")
+    def test_discover_offers_keeps_results_that_do_not_ship_to_canada(self, get):
+        mock_path = Path(__file__).parents[1] / "mock_results.json"
+        with mock_path.open("r", encoding="utf-8") as file:
+            search_data = json.load(file)
+
+        response = unittest.mock.MagicMock()
+        response.json.return_value = search_data
+        response.status_code = 200
+        response.headers = {}
+        response.text = json.dumps(search_data)
+        response.request.url = "https://serpapi.com/search.json"
+        get.return_value = response
+
+        with (
+            patch("agent.daily_deals_agent.SERPAPI_API_KEY", "test-key"),
+            patch("agent.daily_deals_agent.LAST_RESPONSE_FILE", Path("last_response_test.json")),
+        ):
+            offers = discover_offers("winter bike tires")
+
+        self.assertEqual(len(offers), len(search_data["shopping_results"]))
+        self.assertTrue(any(not offer.ships_to_canada for offer in offers))
+
+    @unittest.skipUnless(os.getenv("SERPAPI_API_KEY"), "SERPAPI_API_KEY is not configured")
+    def test_serpapi_external_api_is_reachable(self):
+        response = requests.get(
+            "https://serpapi.com/search.json",
+            params={
+                "api_key": os.environ["SERPAPI_API_KEY"],
+                "engine": "google_shopping",
+                "q": "winter bike tire",
+                "num": 1,
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        search_data = response.json()
+
+        self.assertNotIn("error", search_data)
+        self.assertIsInstance(search_data.get("shopping_results"), list)
+
+    @unittest.skipUnless(os.getenv("SERPAPI_API_KEY"), "SERPAPI_API_KEY is not configured")
+    def test_serpapi_iphone_search_returns_priced_products(self):
+        response = requests.get(
+            "https://serpapi.com/search.json",
+            params={
+                "api_key": os.environ["SERPAPI_API_KEY"],
+                "engine": "google_shopping",
+                "q": "iphone",
+                "num": 5,
+            },
+            timeout=15,
+        )
+        response.raise_for_status()
+        search_data = response.json()
+
+        offers = parse_serpapi_shopping_results(item="iphone", search_data=search_data)
+        titles = [str(result.get("title", "")).lower() for result in search_data["shopping_results"]]
+
+        self.assertTrue(search_data["shopping_results"])
+        self.assertTrue(any("iphone" in title for title in titles))
+        self.assertTrue(offers)
+        self.assertTrue(all(offer.price > 0 for offer in offers))
+
     def test_parse_shipping_cost_detects_free_shipping(self):
         self.assertEqual(parse_shipping_cost("Fast delivery with FREE shipping to Canada"), 0.0)
 

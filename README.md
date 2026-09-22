@@ -2,7 +2,7 @@
 
 ShoppingBot includes a daily AI-powered deals agent that:
 - Reads shopping prompts from `shopping_prompts.txt` (one item per line)
-- Searches online retailers and keeps offers that appear to ship to Canada
+- Searches online retailers and stores all parsed offers with their Canada-shipping status
 - Tracks item price and shipping cost history in PostgreSQL
 - Detects sale price drops compared to prior runs
 - Sends an email alert when sales are detected
@@ -11,6 +11,7 @@ ShoppingBot includes a daily AI-powered deals agent that:
 - `agent/daily_deals_agent.py`: daily deals collection, sale detection, and email notification logic
 - `shopping_prompts.txt`: your shopping prompts (one item per line)
 - `data/sale_report.txt`: last sale alert summary
+- `data/last_response.json`: most recent SerpAPI JSON response, overwritten on each search
 - `.github/workflows/daily-deals-agent.yml`: daily GitHub Actions automation
 
 ## Setup
@@ -66,6 +67,21 @@ docker compose up --build shoppingbot
 ```
 
 The bot is a one-shot container: it runs the configured shopping scan and exits. The Compose connection string uses the internal service name `postgres`; from the host, use `localhost` instead.
+
+Set `VERBOSE_LOGGING=true` in `.env` to log external request URLs, response status, headers, and bodies. API keys are redacted from logged URLs.
+
+Run the external SerpAPI connectivity test through Compose:
+```powershell
+docker compose run --rm --entrypoint python shoppingbot -m unittest discover -s /app/tests -v
+```
+
+The external tests are skipped when `SERPAPI_API_KEY` is not configured. They include a real `iphone` shopping search. The Docker image does not include `tests` or `mock_results.json`, so mount both when running the command:
+```powershell
+docker compose run --rm --entrypoint python `
+   -v "${PWD}/tests:/app/tests" `
+   -v "${PWD}/mock_results.json:/app/mock_results.json:ro" `
+   shoppingbot -m unittest discover -s /app/tests -v
+```
 
 For local development, use:
 ```text

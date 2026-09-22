@@ -18,6 +18,8 @@ services:
   shoppingbot:
     build:
       context: .
+    env_file:
+      - .env
     depends_on:
       postgres:
         condition: service_healthy

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import smtplib
@@ -15,15 +16,22 @@ import psycopg
 import requests
 from bs4 import BeautifulSoup
 
+LOGGER = logging.getLogger(__name__)
+
 PROMPTS_FILE = Path(os.getenv("PROMPTS_FILE", "shopping_prompts.txt"))
 DATABASE_URL = os.getenv("DATABASE_URL")
 SERPAPI_API_KEY = os.getenv("SERPAPI_API_KEY")
+VERBOSE_LOGGING = os.getenv("VERBOSE_LOGGING", "false").lower() in {"1", "true", "yes", "on"}
 SALE_REPORT_FILE = Path(os.getenv("SALE_REPORT_FILE", "data/sale_report.txt"))
+LAST_RESPONSE_FILE = Path(os.getenv("LAST_RESPONSE_FILE", "data/last_response.json"))
 MAX_RESULTS_PER_ITEM = int(os.getenv("MAX_RESULTS_PER_ITEM", "8"))
-TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "15"))
+TIMEOUT_SECONDS = int(os.getenv("REQUEST_TIMEOUT_SECONDS", "30"))
 
 PRICE_HISTORY_TABLE = "price_history"
 SERPAPI_URL = "https://serpapi.com/search.json"
+
+if VERBOSE_LOGGING:
+    logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 
 
 @dataclass
@@ -45,6 +53,27 @@ class SaleAlert:
     old_price: float
     new_price: float
     shipping_cost: float
+
+
+def log_http_exchange(label: str, response: requests.Response) -> None:
+    if not VERBOSE_LOGGING:
+        return
+
+    request_url = response.request.url if response.request else response.url
+    safe_url = re.sub(r"([?&]api_key=)[^&]+", r"\1<redacted>", request_url)
+    LOGGER.debug("%s request URL: %s", label, safe_url)
+    LOGGER.debug(
+        "%s response: status=%s headers=%s body=%s",
+        label,
+        response.status_code,
+        dict(response.headers),
+        response.text,
+    )
+
+
+def write_last_response(path: Path, response_data: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(response_data, indent=2) + "\n", encoding="utf-8")
 
 
 def load_item_prompts(path: Path) -> List[str]:
@@ -143,6 +172,33 @@ def parse_json_ld_offers(item: str, url: str, html: str) -> List[Offer]:
     return offers
 
 
+def parse_serpapi_shopping_results(item: str, search_data: dict) -> List[Offer]:
+    offers: list[Offer] = []
+    for result in search_data.get("shopping_results", []):
+        if not isinstance(result, dict):
+            continue
+
+        price = parse_money(result.get("extracted_price") or result.get("price"))
+        url = result.get("link") or result.get("product_link")
+        if price is None or not url:
+            continue
+
+        delivery = str(result.get("delivery") or "")
+        offers.append(
+            Offer(
+                item=item,
+                retailer=str(result.get("source") or extract_domain(url)),
+                url=url,
+                price=price,
+                currency="CAD",
+                shipping_cost=parse_shipping_cost(delivery),
+                ships_to_canada="canada" in delivery.lower() or ".ca" in extract_domain(url),
+            )
+        )
+
+    return offers
+
+
 def discover_offers(item: str) -> List[Offer]:
     if not SERPAPI_API_KEY:
         raise RuntimeError("SERPAPI_API_KEY must be configured")
@@ -155,16 +211,21 @@ def discover_offers(item: str) -> List[Offer]:
             SERPAPI_URL,
             params={
                 "api_key": SERPAPI_API_KEY,
-                "engine": "google",
+                "engine": "google_shopping",
                 "q": query,
                 "num": MAX_RESULTS_PER_ITEM,
             },
             timeout=TIMEOUT_SECONDS,
         )
+        log_http_exchange("SerpAPI", response)
         response.raise_for_status()
         search_data = response.json()
+        write_last_response(LAST_RESPONSE_FILE, search_data)
         if search_data.get("error"):
             raise RuntimeError(search_data["error"])
+        shopping_offers = parse_serpapi_shopping_results(item=item, search_data=search_data)
+        if shopping_offers:
+            return shopping_offers
         for result in search_data.get("organic_results", []):
             href = result.get("link")
             if href and href.startswith("http"):
@@ -181,6 +242,7 @@ def discover_offers(item: str) -> List[Offer]:
                 headers={"User-Agent": "ShoppingBotDealsAgent/1.0"},
                 timeout=TIMEOUT_SECONDS,
             )
+            log_http_exchange("Retailer", response)
             response.raise_for_status()
             offers.extend(parse_json_ld_offers(item=item, url=url, html=response.text))
         except requests.RequestException:
@@ -192,7 +254,7 @@ def discover_offers(item: str) -> List[Offer]:
         if key not in unique or offer.price < unique[key].price:
             unique[key] = offer
 
-    return [offer for offer in unique.values() if offer.ships_to_canada]
+    return list(unique.values())
 
 
 def get_database_connection() -> psycopg.Connection:
